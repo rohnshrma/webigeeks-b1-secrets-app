@@ -3,10 +3,13 @@ import express from "express";
 import bodyParser from "body-parser";
 import mongoose from "mongoose";
 import connectDB from "./config/db.js";
+import bcrypt from "bcrypt";
 
 dotenv.config();
 
 const app = express();
+
+const saltRounds = 11;
 
 connectDB();
 
@@ -55,12 +58,17 @@ app.route("/login").post(async (req, res) => {
 
     if (existingUser.length == 0) {
       res.redirect("/register");
+      return;
     }
 
-    if (existingUser[0].password === password) {
+    var result = await bcrypt.compare(password, existingUser[0].password);
+
+    if (result) {
       res.render("secrets");
     } else {
-      res.send("invalid password");
+      res.send(
+        "<div><h1>Invalid Password</h1><a href='/login'>Go Back</a></div>"
+      );
     }
   } catch (err) {
     console.log(err);
@@ -76,16 +84,27 @@ app.route("/register").get((req, res) => {
 app.route("/register").post(async (req, res) => {
   const { username, password } = req.body;
 
+  let existingUser;
+
   try {
+    existingUser = await User.find({ username });
+    console.log(existingUser);
+
+    if (existingUser.length > 0) {
+      res.redirect("/login");
+      return;
+    }
+
+    const hash = await bcrypt.hash(password, saltRounds);
+    console.log(hash);
+
     const newUser = new User({
       username,
-      password,
+      password: hash,
     });
 
     await newUser.save();
-
-    console.log("NEWUSER=>", newUser);
-
+    console.log(newUser);
     res.render("secrets");
   } catch (err) {
     console.log(err);
