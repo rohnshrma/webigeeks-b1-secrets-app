@@ -3,15 +3,32 @@ import express from "express";
 import bodyParser from "body-parser";
 import mongoose from "mongoose";
 import connectDB from "./config/db.js";
+
+// auth imports
 import bcrypt from "bcrypt";
+import session from "express-session";
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
 
 dotenv.config();
-
 const app = express();
 
 const saltRounds = 11;
 
 connectDB();
+
+// Session Configuration
+app.use(
+  session({
+    secret: process.env.SECRET,
+    resave: false,
+    saveUninitialized: true,
+  })
+);
+
+// initialize passport
+app.use(passport.initialize());
+app.use(passport.session());
 
 // schema
 const userSchema = new mongoose.Schema(
@@ -29,9 +46,50 @@ const User = new mongoose.model("user", userSchema);
 
 // middleware
 
+app.use((req, res, next) => {
+  console.log(req.isAuthenticated());
+  next();
+});
+
 app.use(express.static("public"));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.set("view engine", "ejs");
+
+// passport local strategy
+passport.use(
+  new LocalStrategy(async (username, password, cb) => {
+    try {
+      const user = await User.findOne({ username });
+      if (!user) {
+        return cb(null, false, { message: "Incorrect username." });
+      }
+
+      const result = bcrypt.compare(password, user.password);
+
+      if (!result) {
+        return cb(null, false, { message: "Incorrect password." });
+      }
+
+      return cb(null, user);
+    } catch (err) {
+      return cb(err);
+    }
+  })
+);
+
+// serialize User
+passport.serializeUser((user, cb) => {
+  cb(null, user.id);
+});
+
+passport.deserializeUser(async (id, cb) => {
+  try {
+    const user = await User.findById(id);
+    cb(null, user);
+  } catch (err) {
+    done(err);
+  }
+});
 
 // routes
 
@@ -46,34 +104,13 @@ app.route("/").get((req, res) => {
 app.route("/login").get((req, res) => {
   res.render("login");
 });
-app.route("/login").post(async (req, res) => {
-  const { username, password } = req.body;
-
-  let existingUser;
-
-  try {
-    existingUser = await User.find({ username });
-
-    console.log(existingUser[0]);
-
-    if (existingUser.length == 0) {
-      res.redirect("/register");
-      return;
-    }
-
-    var result = await bcrypt.compare(password, existingUser[0].password);
-
-    if (result) {
-      res.render("secrets");
-    } else {
-      res.send(
-        "<div><h1>Invalid Password</h1><a href='/login'>Go Back</a></div>"
-      );
-    }
-  } catch (err) {
-    console.log(err);
-  }
-});
+app.route("/login").post(
+  passport.authenticate("local", {
+    successRedirect: "/secrets",
+    failureRedirect: "/login",
+    failureFlash: "true",
+  })
+);
 
 // register
 
@@ -81,7 +118,7 @@ app.route("/register").get((req, res) => {
   res.render("register");
 });
 
-app.route("/register").post(async (req, res) => {
+app.route("/register").post(async (req, res, next) => {
   const { username, password } = req.body;
 
   let existingUser;
@@ -104,12 +141,35 @@ app.route("/register").post(async (req, res) => {
     });
 
     await newUser.save();
-    console.log(newUser);
-    res.render("secrets");
+
+    req.login(newUser, (err) => {
+      if (err) {
+        console.log(err);
+        return;
+      } else {
+        res.redirect("/secrets");
+      }
+    });
   } catch (err) {
     console.log(err);
     res.redirect("/register");
   }
+});
+
+app.get("/secrets", (req, res) => {
+  if (req.isAuthenticated()) {
+    res.render("secrets");
+  } else {
+    res.redirect("/login");
+  }
+});
+
+app.get("/logout", (req, res) => {
+  req.logout((err) => {
+    if (!err) {
+      res.redirect("/");
+    }
+  });
 });
 
 app.listen(process.env.PORT, () => {
