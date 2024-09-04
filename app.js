@@ -10,6 +10,8 @@ import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+
 dotenv.config();
 const app = express();
 
@@ -33,8 +35,9 @@ app.use(passport.session());
 // schema
 const userSchema = new mongoose.Schema(
   {
-    username: { type: String, required: true, minLength: 8, unique: true },
-    password: { type: String, required: true, minLength: 8 },
+    username: { type: String },
+    password: { type: String },
+    googleId: { type: String },
   },
   {
     timestamps: true,
@@ -77,6 +80,34 @@ passport.use(
   })
 );
 
+// passport google  strategy
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: "/auth/google/success",
+    },
+    async (accessToken, refreshToken, profile, cb) => {
+      try {
+        let user = await User.findOne({ googleId: profile.id });
+
+        if (!user) {
+          user = await User.create({
+            username: profile.displayName,
+            googleId: profile.id,
+          });
+        }
+
+        return cb(null, user);
+      } catch (err) {
+        return cb(err, false);
+      }
+    }
+  )
+);
+
 // serialize User
 passport.serializeUser((user, cb) => {
   cb(null, user.id);
@@ -111,6 +142,19 @@ app.route("/login").post(
     failureFlash: "true",
   })
 );
+
+app
+  .route("/auth/google")
+  .get(passport.authenticate("google", { scope: ["profile"] }));
+
+app
+  .route("/auth/google/success")
+  .get(
+    passport.authenticate("google", { failureRedirect: "/login" }),
+    (req, res) => {
+      res.redirect("/secrets");
+    }
+  );
 
 // register
 
